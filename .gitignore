@@ -1,0 +1,20 @@
+# 파이썬
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# 비밀정보 / 런타임 산출물
+.env
+*.log
+*.log.*
+*.pid
+kis_token.json
+*.sqlite
+*.db
+
+# OS
+Thumbs.db
+.DS_Store

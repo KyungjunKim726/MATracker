@@ -1,0 +1,13 @@
+[project]
+name = "matracker"
+version = "0.1.0"
+description = "120일 이동평균선 기준 분할매수/분할매도 신호 서비스"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 루트의 평면 모듈(config, signals ...)과 tests/conftest 를 모두 임포트할 수 있게 한다.
+pythonpath = [".", "tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore::DeprecationWarning"]
