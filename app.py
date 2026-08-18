@@ -73,7 +73,9 @@ class MATrackerService:
 
         sent_count = 0
         for user in users:
-            states = await repository.run(repository.list_states, user.user_id, enabled_only=True)
+            # 상태가 없는 신규 사용자에게는 기본 종목을 심어준다. DB에 사용자만 추가해도
+            # 봇에 /start 를 보내거나 서비스를 재시작하지 않아도 다음 발송부터 받게 된다.
+            states = await repository.run(repository.enabled_states_or_seed, user.user_id)
             for state in states:
                 try:
                     signal = await self.signal_for_state(state.symbol, state)

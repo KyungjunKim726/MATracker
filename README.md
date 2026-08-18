@@ -15,8 +15,15 @@ MySQL `user` 테이블을 읽어 **여러 사용자**를 각자의 봇 토큰·�
 그 외                                  → HOLD 관망
 ```
 
-종목별 매도 기준 이격도는 `config.py`의 `SELL_THRESHOLD_PCT`에 있습니다
-(TQQQ 30% / QLD 20% / SOXL 30%, 미등록 종목은 30%).
+매도 기준 이격도는 두 단계로 결정됩니다.
+
+1. 사용자가 `/track 종목 이격도`로 지정한 값 (`symbol_state.sell_threshold_pct`)
+2. 지정하지 않았으면 `config.py`의 `SELL_THRESHOLD_PCT` 기본값
+   (TQQQ 30% / QLD 20% / SOXL 30%, 미등록 종목은 30%)
+
+같은 종목이라도 사용자마다 다른 기준을 쓸 수 있습니다. 예를 들어 `/track SOXL 25`는
+그 사용자의 SOXL만 25%로 바꾸고, `/track SOXL 기본`은 지정을 지워 다시 기본값을
+따르게 합니다.
 
 ## 설치
 
@@ -59,7 +66,8 @@ Nasdaq으로 넘어가는 로그가 정상입니다.
 | `/signals` | 추적 종목 전체 요약 |
 | `/config [종목] [1회매수금액] [총예수금] [매도분할수]` | 인자 없으면 현재 설정 조회 |
 | `/update [종목] [평단가] [보유주수] [회차]` | 보유 현황 입력 |
-| `/track 종목` / `/untrack 종목` | 추적 시작 / 중단(설정은 유지) |
+| `/track 종목 [매도기준이격도]` | 추적 시작. 이격도를 함께 주면 그 종목의 매도 기준을 사용자 값으로 저장 |
+| `/untrack 종목` | 추적 중단 (설정값은 유지) |
 | `/debug` | 설정·마지막 신호 진단 |
 
 발신자 검증은 (봇 토큰, 챗ID) 조합이 `user` 테이블에 있는지로만 판단합니다. 등록되지
@@ -103,6 +111,11 @@ Nasdaq으로 넘어가는 로그가 정상입니다.
 
 평일 17:00 KST(`config.SIGNAL_CRON_*`)에 사용자별 추적 종목을 계산해 보냅니다.
 
+- 대상은 `telegram_token`과 `telegram_chat_id`가 모두 채워진 사용자입니다. **`user`
+  테이블에 행만 추가하면 됩니다** — 종목 상태가 없는 신규 사용자에게는 발송 시점에 기본
+  종목(TQQQ/QLD/SOXL)을 자동으로 등록하므로, 봇에 `/start`를 보내거나 서비스를 재시작할
+  필요가 없습니다. 단, 모든 종목을 `/untrack` 한 사용자는 그 상태를 존중해 다시 심지
+  않습니다.
 - 시세 기준일이 5일보다 오래되면 건너뜁니다 (`is_stale_market_date`).
 - 이미 보낸 신호는 지문(종목·기준일·판정·종가·120일선·이격도의 SHA-256)으로 걸러냅니다.
 - **발송 성공 후에만** DB에 기록하므로, 텔레그램 실패 시 다음 실행에서 다시 시도합니다.
@@ -189,6 +202,12 @@ After=network-online.target mysql.service
 Wants=network-online.target
 # DB가 다른 서버에 있으면 mysql.service 는 지웁니다.
 
+# 재시작 폭주 제한: 10분 안에 5번 넘게 죽으면 멈추고 failed 상태로 남긴다.
+# 이 두 키는 [Service] 가 아니라 [Unit] 소속이다 ([Service] 에 두면
+# "Unknown key name 'StartLimitIntervalSec' in section 'Service'" 경고와 함께 무시된다).
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
 [Service]
 Type=simple
 User=matracker
@@ -198,11 +217,9 @@ EnvironmentFile=/etc/matracker.env
 ExecStart=/opt/MATracker/.venv/bin/python main.py run
 
 # 죽으면 항상 되살린다 (원본 봇의 healthcheck.sh 역할)
+# 재시작 폭주 제한은 위 [Unit] 섹션의 StartLimit* 키가 담당한다.
 Restart=always
 RestartSec=10
-# 10분 안에 5번 넘게 죽으면 멈추고 failed 상태로 남긴다 (무한 재시작 루프 방지)
-StartLimitIntervalSec=600
-StartLimitBurst=5
 
 # 로그는 journald 로 (파일 로테이션 신경 쓸 필요 없음)
 StandardOutput=journal
@@ -213,6 +230,8 @@ SyslogIdentifier=matracker
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+# 주의: ProtectHome=true 는 /root 와 /home 을 가린다. 앱이나 venv 를 홈 디렉터리에 두면
+# 인터프리터를 찾지 못해 203/EXEC 로 죽는다. 홈에 둘 수밖에 없으면 read-only 로 바꾼다.
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
@@ -257,11 +276,42 @@ sudo systemctl restart matracker
 sudo journalctl -u matracker -n 30
 ```
 
-`models.py`에 컬럼을 추가했다면 재시작 전에 `main.py initdb`를 다시 돌립니다. 다만
-`create_all`은 **없는 테이블만 만들고 기존 테이블의 컬럼은 바꾸지 않으므로**, 컬럼 추가는
-`ALTER TABLE`을 직접 실행해야 합니다.
+`models.py`에 컬럼을 추가했다면 재시작 전에 `main.py initdb`를 다시 돌립니다.
+`create_all`은 없는 테이블만 만들고 기존 테이블은 건드리지 않으므로, 나중에 추가된
+컬럼은 `db.py`의 `_ADDED_COLUMNS`에 `ALTER TABLE` 문을 등록해 두었습니다. `initdb`가
+누락된 컬럼만 찾아 채우고 로그에 남깁니다. 새 컬럼을 만들 때도 같은 방식으로 등록하세요
+(컬럼 타입 변경이나 삭제는 자동화하지 않습니다 — 직접 `ALTER TABLE`).
 
-### 9) 운영 시 주의사항
+### 9) 기동 실패 진단
+
+`systemctl status matracker`의 `status=N`이 원인을 거의 특정해 줍니다. 파이썬까지 도달하지
+못한 실패(203 / 200 / 217)는 로그에 트레이스백이 없습니다.
+
+| status | 의미 | 원인과 조치 |
+| --- | --- | --- |
+| `203/EXEC` | ExecStart 실행 불가 | ① **앱이나 venv가 `/root` 아래에 있는데 `ProtectHome=true`를 걸었다** — systemd가 `/root`를 가려서 인터프리터가 없는 것으로 보인다. `/opt`로 옮기거나 `ProtectHome=read-only`로 완화한다. ② 경로 오타. ③ venv의 `bin/python3` 심볼릭 링크가 깨졌다(시스템 파이썬 업그레이드 후 흔함) → venv 재생성 |
+| `200/CHDIR` | WorkingDirectory 진입 불가 | 경로가 없거나 서비스 계정에 접근 권한이 없음 |
+| `217/USER` | `User=` 계정 없음 | `useradd` 단계를 건너뛴 경우 |
+| `1` | 파이썬이 예외로 종료 | 로그의 트레이스백 확인. 대개 DB 접속 실패(`OperationalError`)나 의존성 누락(`ModuleNotFoundError`) |
+
+`ProtectHome` / `ProtectSystem` 같은 샌드박스 옵션은 **경로와 함께 결정해야 합니다.** 앱을
+`/opt`에 두면 이 예시 그대로 쓸 수 있고, 홈 디렉터리(`/root`, `/home/사용자`)에 두려면
+`ProtectHome`을 빼거나 `read-only`로 바꿔야 합니다.
+
+의존성이 서버 venv에 들어 있는지 한 줄로 확인할 수 있습니다.
+
+```bash
+/opt/MATracker/.venv/bin/python -c "import httpx, apscheduler, pytz, sqlalchemy, pymysql; print('deps OK')"
+```
+
+재시작 폭주로 `failed`에 머물러 있으면 카운터를 지우고 다시 올립니다.
+
+```bash
+sudo systemctl reset-failed matracker
+sudo systemctl restart matracker
+```
+
+### 10) 운영 시 주의사항
 
 - **인스턴스는 하나만.** 같은 봇 토큰으로 두 프로세스가 롱폴링하면 텔레그램이 409를
   돌려주고 명령이 간헐적으로 씹힙니다. 서비스가 돌고 있는 동안 `main.py run`을 손으로

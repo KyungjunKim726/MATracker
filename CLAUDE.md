@@ -36,11 +36,22 @@ python -m pytest -k threshold                        # 이름으로 골라서
 표준 모듈명(`types`, `queue`, `select`, `logging` …)을 피할 것. 같은 이유로 텔레그램
 클라이언트는 `telegram_api.py`다.
 
+**매도 기준 이격도는 2단 조회다.** `signals.resolve_sell_threshold(symbol, strategy)`가
+`strategy.sell_threshold_pct`(사용자가 `/track 종목 이격도`로 지정한 값)를 먼저 보고,
+`None`이면 `config.sell_threshold_pct(symbol)` 기본값으로 떨어진다. `None`이 "미지정"을
+뜻하므로 `or` 대신 `is None`으로 판단해야 한다(0.0과 구분). 임계값이 필요한 곳에서
+`config.sell_threshold_pct`를 직접 부르면 사용자 설정이 무시되므로 반드시 이 함수를 쓴다.
+`repository.track_symbol`은 인자가 `None`일 때 기존 값을 지우지 않으며, 기본값으로
+되돌리는 것은 `clear_sell_threshold`(`/track 종목 기본`)의 역할이다.
+
 **테이블 두 개, 하나는 기존 것.** `models.py`가 `user`(기존 스키마 —
 `app_key`/`app_secret`/`cano`/`acnt_prdt_cd`는 KIS용,
 `telegram_token`/`telegram_chat_id`는 알림용)를 매핑하고 `symbol_state`(사용자 × 종목
 전략 + 마지막 발송 기록)를 정의한다. `db.init_db()`는 `create_all`을
-`symbol_state.__table__`로 한정하므로 `user` 테이블은 변경되지 않는다.
+`symbol_state.__table__`로 한정하므로 `user` 테이블은 변경되지 않는다. `create_all`은 기존
+테이블의 컬럼을 추가하지 않으므로, 나중에 생긴 컬럼은 `db._ADDED_COLUMNS`에 `ALTER TABLE`
+문으로 등록해 두고 `init_db()`가 누락분만 채운다. `models.py`에 컬럼을 추가할 때마다 여기에도
+넣을 것 — 안 넣으면 이미 배포된 DB에서 `Unknown column` 으로 죽는다.
 
 **종목 정렬 순서가 동작에 영향을 준다.** 명령에서 종목을 생략할 수 있고
 (`/config 150 18000 120`) 그때 *첫* 추적 종목을 쓰기 때문에,
@@ -56,9 +67,12 @@ python -m pytest -k threshold                        # 이름으로 골라서
 세션 팩토리가 `expire_on_commit=False`이므로 반환된 ORM 객체는 세션이 닫힌 뒤에도 읽을 수
 있는 스냅샷이다.
 
-**신규 사용자는 지연 초기화된다.** `repository.tracked_or_seed`는 상태 행이 *하나도* 없는
-사용자에게만 기본 종목을 심는다. `/untrack`으로 전부 끈 사용자는 빈 상태로 남는다 —
-누락이 아니라 의도된 동작이다.
+**신규 사용자는 지연 초기화된다.** `repository.enabled_states_or_seed`(이름만 다른
+`tracked_or_seed`도 같은 함수를 쓴다)가 상태 행이 *하나도* 없는 사용자에게만 기본 종목을
+심는다. 명령 처리 경로와 `broadcast_signals`가 모두 이 함수를 거치므로, `user` 테이블에
+행만 추가하면 `/start`나 재시작 없이 다음 자동 발송부터 대상이 된다. 반대로 `/untrack`으로
+전부 끈 사용자는 빈 상태로 남는다 — 누락이 아니라 의도된 동작이다. 종목 목록을 얻을 때
+`list_states(enabled_only=True)`를 직접 쓰면 이 시딩이 빠지므로 주의할 것.
 
 **시세: 폴백 체인 + 순수 파서.** `prices.py`는 Yahoo/httpx → Yahoo/urllib → Nasdaq →
 Stooq(브라우저 검증용 SHA-256 PoW 솔버 포함) 순으로 시도한다. 각 소스는

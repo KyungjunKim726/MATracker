@@ -209,11 +209,29 @@ async def _cmd_update(args: Sequence[str], ctx: CommandContext, prices: PriceSer
 
 async def _cmd_track(args: Sequence[str], ctx: CommandContext, prices: PriceService) -> None:
     if not args or not is_ticker(args[0]):
-        await ctx.reply("사용법: <code>/track 종목</code>\n예시: <code>/track SOXL</code>")
+        await ctx.reply(messages.usage_track())
         return
 
     symbol = args[0].upper()
-    state = await repository.run(repository.set_enabled, ctx.user_id, symbol, True)
+    threshold: float | None = None
+
+    if len(args) >= 2:
+        if args[1] in ("기본", "default", "-"):
+            state = await repository.run(repository.clear_sell_threshold, ctx.user_id, symbol)
+            await ctx.reply(messages.tracking_changed(state))
+            return
+        try:
+            threshold = float(args[1])
+        except ValueError:
+            await ctx.reply(messages.invalid_number())
+            return
+        if not 0 < threshold <= config.MAX_SELL_THRESHOLD_PCT:
+            await ctx.reply(messages.threshold_out_of_range())
+            return
+
+    state = await repository.run(
+        repository.track_symbol, ctx.user_id, symbol, sell_threshold_pct=threshold
+    )
     await ctx.reply(messages.tracking_changed(state))
 
 

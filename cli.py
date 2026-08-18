@@ -28,6 +28,7 @@ class _PlainStrategy:
 
     round_unit: float = config.DEFAULT_ROUND_UNIT
     shares: int = 0
+    sell_threshold_pct: float | None = None  # None이면 종목별 기본값
     sell_splits: int = config.DEFAULT_SELL_SPLITS
 
 

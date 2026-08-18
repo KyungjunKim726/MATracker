@@ -45,6 +45,9 @@ SELL_THRESHOLD_PCT: dict[str, float] = {
     "SOXL": 30.0,
 }
 
+#: 사용자가 /track 으로 지정할 수 있는 매도 기준 이격도 상한(%).
+MAX_SELL_THRESHOLD_PCT = 300.0
+
 #: 신규 사용자에게 기본으로 등록해주는 추적 종목.
 DEFAULT_TRACKED_SYMBOLS: tuple[str, ...] = ("TQQQ", "QLD", "SOXL")
 

@@ -132,15 +132,20 @@ def tracked_symbols(session: Session, user_id: int) -> list[str]:
     return [state.symbol for state in list_states(session, user_id, enabled_only=True)]
 
 
-def tracked_or_seed(session: Session, user_id: int) -> list[str]:
-    """추적 종목을 돌려준다. 상태가 하나도 없는 신규 사용자면 기본 종목을 심는다.
+def enabled_states_or_seed(session: Session, user_id: int) -> list[SymbolState]:
+    """추적 중인 종목 상태. 상태가 하나도 없는 신규 사용자면 기본 종목을 심는다.
 
-    사용자가 모든 종목을 /untrack 한 경우는 의도한 상태이므로 다시 심지 않는다.
+    DB에 사용자만 추가해두면 봇에 말을 걸지 않아도 자동 발송 대상이 된다. 반대로 모든
+    종목을 /untrack 한 사용자는 의도한 상태이므로 다시 심지 않는다.
     """
     states = list_states(session, user_id)
     if not states:
         states = ensure_default_states(session, user_id)
-    return [state.symbol for state in states if state.enabled]
+    return [state for state in states if state.enabled]
+
+
+def tracked_or_seed(session: Session, user_id: int) -> list[str]:
+    return [state.symbol for state in enabled_states_or_seed(session, user_id)]
 
 
 def all_tracked_symbols(session: Session) -> list[str]:
@@ -192,6 +197,32 @@ def set_enabled(session: Session, user_id: int, symbol: str, enabled: bool) -> S
     return state
 
 
+def track_symbol(
+    session: Session,
+    user_id: int,
+    symbol: str,
+    *,
+    sell_threshold_pct: float | None = None,
+) -> SymbolState:
+    """추적을 켜고, 매도 기준 이격도를 함께 받았으면 저장한다.
+
+    `sell_threshold_pct=None`은 "지정 안 함"이므로 기존 값을 지우지 않는다. 기본값으로
+    되돌리려면 `clear_sell_threshold()`를 쓴다.
+    """
+    state = ensure_state(session, user_id, symbol)
+    state.enabled = True
+    if sell_threshold_pct is not None:
+        state.sell_threshold_pct = sell_threshold_pct
+    return state
+
+
+def clear_sell_threshold(session: Session, user_id: int, symbol: str) -> SymbolState:
+    """사용자 지정 기준을 지워 config 기본값을 따르게 한다."""
+    state = ensure_state(session, user_id, symbol)
+    state.sell_threshold_pct = None
+    return state
+
+
 def record_sent_signal(session: Session, user_id: int, signal: Signal) -> SymbolState:
     """신호 발송에 성공한 뒤 중복 차단용 기록을 남긴다."""
     state = ensure_state(session, user_id, signal.symbol)
@@ -213,6 +244,7 @@ def snapshot_states(states: Sequence[SymbolState]) -> list[dict[str, Any]]:
             "sell_splits": state.sell_splits,
             "shares": state.shares,
             "avg_price": state.avg_price,
+            "sell_threshold_pct": state.sell_threshold_pct,
             "last_signal_date": state.last_signal_date,
             "last_signal_action": state.last_signal_action,
             "last_price_source": state.last_price_source,

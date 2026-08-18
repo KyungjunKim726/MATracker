@@ -180,6 +180,67 @@ class TestTracking:
         assert "추적을 시작" in message
         assert "SOXL" in await repository.run(repository.tracked_symbols, ctx.user_id)
 
+    async def test_track_stores_sell_threshold(self, ctx, prices):
+        message = await run("/track SOXL 25", ctx, prices)
+        assert "25.0%" in message
+        assert "사용자 지정" in message
+
+        state = await repository.run(repository.get_state, ctx.user_id, "SOXL")
+        assert state.sell_threshold_pct == pytest.approx(25.0)
+        assert state.enabled is True
+
+    async def test_threshold_defaults_to_config_when_omitted(self, ctx, prices):
+        message = await run("/track SOXL", ctx, prices)
+        assert "30.0%" in message  # config 의 SOXL 기본값
+        assert "기본값" in message
+
+        state = await repository.run(repository.get_state, ctx.user_id, "SOXL")
+        assert state.sell_threshold_pct is None
+
+    async def test_track_without_threshold_keeps_existing_value(self, ctx, prices):
+        await run("/track SOXL 25", ctx, prices)
+        await run("/untrack SOXL", ctx, prices)
+        message = await run("/track SOXL", ctx, prices)
+
+        assert "25.0%" in message
+        state = await repository.run(repository.get_state, ctx.user_id, "SOXL")
+        assert state.sell_threshold_pct == pytest.approx(25.0)
+
+    async def test_threshold_can_be_reset_to_default(self, ctx, prices):
+        await run("/track SOXL 25", ctx, prices)
+        message = await run("/track SOXL 기본", ctx, prices)
+
+        assert "30.0%" in message
+        assert "기본값" in message
+        state = await repository.run(repository.get_state, ctx.user_id, "SOXL")
+        assert state.sell_threshold_pct is None
+
+    async def test_threshold_affects_signal(self, ctx, prices):
+        """이격도 약 29.7%인 시세에서 기준을 25%로 낮추면 매도 판정이 된다."""
+
+        async def source(symbol: str):
+            return make_closes([100.0] * 119 + [130.0], source="test")
+
+        service = PriceService([source])
+        await run("/track TQQQ", ctx, service)
+        assert "관망" in await run("/signal TQQQ", ctx, service)
+
+        await run("/track TQQQ 25", ctx, service)
+        assert "분할매도" in await run("/signal TQQQ", ctx, service)
+
+    @pytest.mark.parametrize("value", ["0", "-5", "301"])
+    async def test_rejects_threshold_out_of_range(self, ctx, prices, value):
+        assert "이하로 입력" in await run(f"/track SOXL {value}", ctx, prices)
+
+    async def test_rejects_non_numeric_threshold(self, ctx, prices):
+        assert "숫자" in await run("/track SOXL 이십오", ctx, prices)
+
+    async def test_config_shows_threshold_origin(self, ctx, prices):
+        await run("/track SOXL 25", ctx, prices)
+        message = await run("/config SOXL", ctx, prices)
+        assert "매도 기준 이격도" in message
+        assert "25.0%" in message
+
     async def test_untrack_disables_symbol(self, ctx, prices):
         await run("/start", ctx, prices)
         message = await run("/untrack QLD", ctx, prices)

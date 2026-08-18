@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
 import db
+import timeutil
 from models import Base
 from values import DailyClose
 
@@ -47,3 +50,20 @@ def make_closes(prices: list[float], *, start_day: int = 1, source: str = "test"
 
 def flat_closes(price: float, count: int = 120, **kwargs) -> list[DailyClose]:
     return make_closes([price] * count, **kwargs)
+
+
+def closes_ending_today(prices: list[float], *, source: str = "test") -> list[DailyClose]:
+    """마지막 종가의 기준일이 '오늘'(미국장 기준)인 시계열.
+
+    자동 발송은 오래된 시세를 건너뛰므로(`is_stale_market_date`), 발송 경로를 테스트할
+    때는 고정 날짜가 아니라 현재 날짜 기준 시계열이 필요하다.
+    """
+    last_day = timeutil.market_today()
+    return [
+        DailyClose(
+            date=(last_day - timedelta(days=len(prices) - 1 - offset)).isoformat(),
+            close=price,
+            source=source,
+        )
+        for offset, price in enumerate(prices)
+    ]

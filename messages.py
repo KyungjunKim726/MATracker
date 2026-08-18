@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from html import escape as _escape
 
 import config
+import signals
 from models import SymbolState
 from signals import BUY, HOLD, SELL, Signal
 
@@ -42,7 +43,7 @@ def start(symbols: Sequence[str]) -> str:
         "/signals - 추적 종목 전체 요약\n"
         "/config [종목] [1회매수금액] [총예수금] [매도분할수]\n"
         "/update [종목] [평단가] [보유주수] [회차]\n"
-        "/track [종목] / /untrack [종목]\n"
+        "/track [종목] [매도기준이격도] / /untrack [종목]\n"
         "/debug - 설정 진단"
     )
 
@@ -114,6 +115,7 @@ def strategy(state: SymbolState) -> str:
         f"1회 매수금액: <b>${money(state.round_unit)}</b>\n"
         f"총 예수금 기준: <b>${money(state.total_budget)}</b>\n"
         f"매도 분할 수: <b>{state.sell_splits}</b>\n"
+        f"{threshold_line(state)}\n"
         f"보유수량: <b>{state.shares}</b>주 / 평단 <b>${money(state.avg_price)}</b>\n"
         f"현재 회차: <b>{state.current_round}</b>회차\n"
         f"추적 여부: <b>{'ON' if state.enabled else 'OFF'}</b>"
@@ -139,10 +141,37 @@ def holdings_updated(state: SymbolState) -> str:
     )
 
 
+def threshold_line(state: SymbolState) -> str:
+    """매도 기준 이격도와 그 출처(사용자 지정 / 기본값)."""
+    effective = signals.resolve_sell_threshold(state.symbol, state)
+    origin = "사용자 지정" if state.sell_threshold_pct is not None else "기본값"
+    return f"매도 기준 이격도: <b>{effective:.1f}%</b> ({origin})"
+
+
 def tracking_changed(state: SymbolState) -> str:
     if state.enabled:
-        return f"✅ <b>{esc(state.symbol)}</b> 추적을 시작합니다."
+        return (
+            f"✅ <b>{esc(state.symbol)}</b> 추적을 시작합니다.\n"
+            f"{threshold_line(state)}\n"
+            f"1회 매수금액: <b>${money(state.round_unit)}</b> / 매도 분할 수: <b>{state.sell_splits}</b>"
+        )
     return f"⏸️ <b>{esc(state.symbol)}</b> 추적을 중단했습니다. 설정값은 유지됩니다."
+
+
+def usage_track() -> str:
+    return (
+        "사용법: <code>/track 종목 [매도기준이격도]</code>\n"
+        "예시: <code>/track SOXL 25</code> — SOXL을 추적하고 매도 기준을 25%로\n"
+        "예시: <code>/track SOXL</code> — 기준은 그대로 두고 추적만 시작\n"
+        "예시: <code>/track SOXL 기본</code> — 사용자 지정 기준을 지우고 기본값 사용"
+    )
+
+
+def threshold_out_of_range() -> str:
+    return (
+        f"매도 기준 이격도는 0보다 크고 {config.MAX_SELL_THRESHOLD_PCT:.0f}% 이하로 입력해주세요.\n"
+        "예시: <code>/track SOXL 25</code>"
+    )
 
 
 def usage_update(symbol: str) -> str:
@@ -190,7 +219,8 @@ def debug(user_name: str, app_key: str | None, states: Sequence[SymbolState], no
     for state in states:
         lines.append(
             f"{esc(state.symbol)} [{'ON' if state.enabled else 'OFF'}] "
-            f"매도기준 {config.sell_threshold_pct(state.symbol):.0f}% / "
+            f"매도기준 {signals.resolve_sell_threshold(state.symbol, state):.1f}%"
+            f"{'' if state.sell_threshold_pct is not None else '(기본)'} / "
             f"last={esc(state.last_signal_date or '-')} "
             f"{esc(state.last_signal_action or '-')} "
             f"소스={esc(state.last_price_source or '-')}"

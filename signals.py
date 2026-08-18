@@ -38,6 +38,16 @@ class StrategyInput(Protocol):
     round_unit: float
     shares: int
     sell_splits: int
+    #: None이면 종목별 기본값(config.SELL_THRESHOLD_PCT)을 쓴다.
+    sell_threshold_pct: float | None
+
+
+def resolve_sell_threshold(symbol: str, strategy: object | None = None) -> float:
+    """분할매도 기준 이격도(%). 사용자 지정값이 있으면 그것을, 없으면 기본값을 쓴다."""
+    value = getattr(strategy, "sell_threshold_pct", None)
+    if value is None:
+        return config.sell_threshold_pct(symbol)
+    return float(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +113,7 @@ def calculate_signal(
         raise ValueError(f"{symbol} 최신 종가가 유효하지 않습니다: {close}")
 
     deviation_pct = ((close / sma) - 1.0) * 100.0
-    threshold = config.sell_threshold_pct(symbol)
+    threshold = resolve_sell_threshold(symbol, strategy)
 
     if close < sma:
         action = BUY

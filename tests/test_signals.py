@@ -16,6 +16,7 @@ class Strategy:
     round_unit: float = 100.0
     shares: int = 0
     sell_splits: int = 120
+    sell_threshold_pct: float | None = None  # None이면 종목별 기본값
 
 
 def closes_with_last(last: float, *, base: float = 100.0, count: int = 120):
@@ -57,6 +58,19 @@ class TestAction:
         assert signals.calculate_signal("QLD", closes, Strategy()).action == SELL
         assert signals.calculate_signal("TQQQ", closes, Strategy()).action == HOLD
 
+    def test_user_threshold_overrides_symbol_default(self):
+        """이격도 약 29.7%: 기본 30%면 관망이지만 사용자가 25%로 낮추면 매도."""
+        closes = closes_with_last(130.0)
+        assert signals.calculate_signal("TQQQ", closes, Strategy()).action == HOLD
+
+        signal = signals.calculate_signal("TQQQ", closes, Strategy(sell_threshold_pct=25.0))
+        assert signal.action == SELL
+        assert signal.sell_threshold_pct == pytest.approx(25.0)
+
+    def test_user_threshold_can_be_stricter(self):
+        signal = signals.calculate_signal("QLD", closes_with_last(130.0), Strategy(sell_threshold_pct=50.0))
+        assert signal.action == HOLD  # QLD 기본 20%였다면 매도였다
+
     def test_unknown_symbol_uses_default_threshold(self):
         signal = signals.calculate_signal("SPXL", closes_with_last(130.0), Strategy())
         assert signal.sell_threshold_pct == pytest.approx(30.0)
@@ -81,6 +95,23 @@ class TestAction:
         assert signal.market_date == closes[-1].date
         assert signal.price_source == "nasdaq"
         assert signal.window == 120
+
+
+class TestResolveSellThreshold:
+    def test_falls_back_to_symbol_default(self):
+        assert signals.resolve_sell_threshold("QLD", Strategy()) == pytest.approx(20.0)
+        assert signals.resolve_sell_threshold("QLD", None) == pytest.approx(20.0)
+
+    def test_uses_strategy_value(self):
+        assert signals.resolve_sell_threshold("QLD", Strategy(sell_threshold_pct=12.5)) == pytest.approx(12.5)
+
+    def test_object_without_field_is_fine(self):
+        class Bare:
+            round_unit = 100.0
+            shares = 0
+            sell_splits = 120
+
+        assert signals.resolve_sell_threshold("TQQQ", Bare()) == pytest.approx(30.0)
 
 
 class TestFingerprint:

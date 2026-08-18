@@ -79,6 +79,10 @@ class SymbolState(Base):
     total_budget = Column(Float, nullable=False, default=config.DEFAULT_TOTAL_BUDGET)
     sell_splits = Column(Integer, nullable=False, default=config.DEFAULT_SELL_SPLITS)
 
+    #: 분할매도 기준 이격도(%). NULL이면 config.SELL_THRESHOLD_PCT 기본값을 따른다.
+    #: 사용자가 /track 으로 직접 지정한 경우에만 값이 들어간다.
+    sell_threshold_pct = Column(Float, nullable=True)
+
     # 보유 현황 (사용자가 /update 로 직접 입력)
     avg_price = Column(Float, nullable=False, default=0.0)
     shares = Column(Integer, nullable=False, default=0)

@@ -6,7 +6,7 @@ import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -70,11 +70,31 @@ def session_scope() -> Generator[Session]:
         session.close()
 
 
-def init_db() -> None:
-    """이 서비스가 추가한 테이블만 없을 때 생성한다.
+#: 이미 만들어진 symbol_state 에 나중에 추가된 컬럼들. create_all은 기존 테이블을
+#: 변경하지 않으므로, 운영 중 배포에서 컬럼이 빠지는 것을 막기 위해 직접 채워 넣는다.
+_ADDED_COLUMNS: dict[str, str] = {
+    "sell_threshold_pct": "ALTER TABLE symbol_state ADD COLUMN sell_threshold_pct DOUBLE NULL",
+}
 
-    기존 `user` 테이블은 이미 존재하므로 건드리지 않는다(create_all은 누락된
-    테이블만 만든다).
+
+def _add_missing_columns() -> None:
+    engine = get_engine()
+    existing = {column["name"] for column in inspect(engine).get_columns(SymbolState.__tablename__)}
+
+    for name, statement in _ADDED_COLUMNS.items():
+        if name in existing:
+            continue
+        with engine.begin() as connection:
+            connection.execute(text(statement))
+        logger.warning("symbol_state.%s 컬럼을 추가했습니다.", name)
+
+
+def init_db() -> None:
+    """이 서비스가 쓰는 테이블을 준비한다.
+
+    기존 `user` 테이블은 이미 존재하므로 건드리지 않는다(create_all은 누락된 테이블만
+    만든다). `symbol_state`가 이미 있으면 누락된 컬럼만 채운다.
     """
     Base.metadata.create_all(bind=get_engine(), tables=[SymbolState.__table__])
+    _add_missing_columns()
     logger.info("DB 초기화 완료: %s", SymbolState.__tablename__)

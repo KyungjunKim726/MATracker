@@ -146,6 +146,37 @@ class TestSymbolState:
             )
         assert state.sell_splits == 1
 
+    def test_track_symbol_sets_threshold_and_enables(self, user_id):
+        with db.session_scope() as session:
+            repository.set_enabled(session, user_id, "SOXL", False)
+            state = repository.track_symbol(session, user_id, "SOXL", sell_threshold_pct=25.0)
+
+        assert state.enabled is True
+        assert state.sell_threshold_pct == pytest.approx(25.0)
+
+    def test_track_symbol_without_threshold_preserves_it(self, user_id):
+        with db.session_scope() as session:
+            repository.track_symbol(session, user_id, "SOXL", sell_threshold_pct=25.0)
+
+        with db.session_scope() as session:
+            state = repository.track_symbol(session, user_id, "SOXL")
+
+        assert state.sell_threshold_pct == pytest.approx(25.0)
+
+    def test_clear_sell_threshold(self, user_id):
+        with db.session_scope() as session:
+            repository.track_symbol(session, user_id, "SOXL", sell_threshold_pct=25.0)
+
+        with db.session_scope() as session:
+            state = repository.clear_sell_threshold(session, user_id, "SOXL")
+
+        assert state.sell_threshold_pct is None
+
+    def test_new_state_has_no_user_threshold(self, user_id):
+        with db.session_scope() as session:
+            state = repository.ensure_state(session, user_id, "SOXL")
+        assert state.sell_threshold_pct is None
+
     def test_record_sent_signal(self, user_id):
         signal = signals.calculate_signal("TQQQ", flat_closes(100.0), _Strategy())
 
